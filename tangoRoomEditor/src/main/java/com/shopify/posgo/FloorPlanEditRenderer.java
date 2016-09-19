@@ -17,7 +17,11 @@ package com.shopify.posgo;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.Rect;
 import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.MotionEvent;
@@ -27,33 +31,37 @@ import com.google.atap.tangoservice.TangoPoseData;
 import com.kanawish.raja.raja.ScenePoseCalculator;
 
 import org.rajawali3d.Object3D;
-import org.rajawali3d.animation.Animation;
-import org.rajawali3d.animation.Animation3D;
-import org.rajawali3d.animation.RotateOnAxisAnimation;
 import org.rajawali3d.lights.DirectionalLight;
-import org.rajawali3d.loader.LoaderOBJ;
-import org.rajawali3d.loader.ParsingException;
 import org.rajawali3d.materials.Material;
 import org.rajawali3d.materials.methods.DiffuseMethod;
 import org.rajawali3d.materials.methods.SpecularMethod;
 import org.rajawali3d.materials.textures.ATexture;
-import org.rajawali3d.materials.textures.AlphaMapTexture;
 import org.rajawali3d.materials.textures.StreamingTexture;
 import org.rajawali3d.materials.textures.Texture;
 import org.rajawali3d.math.Matrix4;
 import org.rajawali3d.math.Quaternion;
 import org.rajawali3d.math.vector.Vector3;
-import org.rajawali3d.primitives.Cube;
+import org.rajawali3d.primitives.Line3D;
 import org.rajawali3d.primitives.Plane;
 import org.rajawali3d.primitives.ScreenQuad;
-import org.rajawali3d.primitives.Sphere;
 import org.rajawali3d.renderer.Renderer;
+import org.rajawali3d.util.Intersector;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Stack;
 
 import javax.microedition.khronos.opengles.GL10;
 
+import rx.functions.Action1;
+import rx.functions.Action3;
+
 /**
  * In floorplan edit mode, we are creating a list of planes in clockwise order.
- *
+ * <p>
  * FIXME WIP just getting started
  */
 public class FloorPlanEditRenderer extends Renderer {
@@ -67,10 +75,18 @@ public class FloorPlanEditRenderer extends Renderer {
     private boolean sceneCameraConfigured;
 
     // TODO: Floor, Viewer's camera, 2-3 Models
-    private Object3D plane;
 
-    private Matrix4 objectTransform;
-    private boolean objectPoseUpdated = false;
+    Map<float[], Plane> planeMap = new HashMap<>();
+    List<Object3D> lines = new ArrayList<>();
+
+    private Material wallMaterial;
+    private Material selectedWallMaterial;
+
+    private boolean modelUpdated = false;
+    private ArrayList<float[]> updatedList;
+    private Plane selectedPlane = null;
+    private Material linesMaterial;
+    private Material intersectMaterial;
 
     public FloorPlanEditRenderer(Context context) {
         super(context);
@@ -96,7 +112,7 @@ public class FloorPlanEditRenderer extends Renderer {
             Log.e(TAG, "Exception creating texture for RGB camera contents", e);
         }
         getCurrentScene().addChildAt(backgroundQuad, 0);
-        backgroundQuad.rotate(Vector3.Axis.X,180);
+        backgroundQuad.rotate(Vector3.Axis.X, 180);
 
         // Add a directional light in an arbitrary direction.
         DirectionalLight light = new DirectionalLight(1, -0.5, -1);
@@ -105,27 +121,65 @@ public class FloorPlanEditRenderer extends Renderer {
         light.setPosition(0, 10, 0);
         getCurrentScene().addLight(light);
 
-        // Set-up materials
-        Material wallMaterial = new Material();
-        wallMaterial.enableLighting(true);
-        wallMaterial.setDiffuseMethod(new DiffuseMethod.Lambert());
-        Bitmap wallBitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888);
-        new AlphaMapTexture("wallTexture", wallBitmap);
+        Bitmap wallBitmap = buildWallBitmap("Wall");
 
-        Material checkerboard = new Material();
+        // Set-up materials
+        wallMaterial = new Material();
+        Texture wallTexture = new Texture("wallTexture", wallBitmap);
         try {
-            checkerboard.addTexture(new Texture("checkerboard", R.drawable.checkerboard));
-            checkerboard.setColorInfluence(0);
+            wallMaterial.addTexture(wallTexture);
+            wallMaterial.setColorInfluence(0);
         } catch (ATexture.TextureException e) {
             e.printStackTrace();
         }
 
-        plane = new Plane();
-        plane.setMaterial(checkerboard);
-        plane.setDoubleSided(true);
-        plane.setColor(0xff0000ff);
-        plane.setVisible(false);
-        getCurrentScene().addChild(plane);
+        selectedWallMaterial = new Material();
+        try {
+            selectedWallMaterial.addTexture(new Texture("checkerboard", R.drawable.checkerboard));
+            selectedWallMaterial.setColorInfluence(0);
+        } catch (ATexture.TextureException e) {
+            e.printStackTrace();
+        }
+
+        linesMaterial = new Material();
+
+        intersectMaterial = new Material();
+        intersectMaterial.useVertexColors(true);
+    }
+
+    @NonNull
+    private Bitmap buildWallBitmap(String text) {
+        Bitmap wallBitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888);
+//            BitmapFactory.decodeResource(getContext().getResources(),R.drawable.instructions);
+        // Init Canvas and Paint
+        Canvas textCanvas = new Canvas(wallBitmap);
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(36);
+
+        // Clear and draw text in canvas.
+        textCanvas.drawColor(0, PorterDuff.Mode.CLEAR);
+
+        Rect cr = new Rect(5, 5, textCanvas.getWidth() - 5, textCanvas.getHeight() - 5);
+        float cX = cr.exactCenterX();
+        float cY = cr.exactCenterY();
+
+        textCanvas.rotate(180, cX, cY);
+        paint.setColor(Color.YELLOW);
+        paint.setAlpha(128);
+        textCanvas.drawRect(cr, paint);
+        paint.setColor(Color.RED);
+        paint.setAlpha(255);
+        textCanvas.drawCircle(cr.right, cr.top, 5, paint);
+        paint.setColor(Color.MAGENTA);
+        textCanvas.drawCircle(cX, cY, 5, paint);
+        paint.setColor(Color.BLUE);
+        textCanvas.drawCircle(cr.left, cr.bottom, 5, paint);
+
+        paint.setColor(Color.GREEN);
+        paint.setTextAlign(Paint.Align.CENTER);
+        textCanvas.drawText(text, cX, cY, paint);
+        return wallBitmap;
     }
 
     @NonNull
@@ -138,52 +192,174 @@ public class FloorPlanEditRenderer extends Renderer {
         return material;
     }
 
-    enum Furniture {
-        PLANE, CUBE, SPHERE ;
-        Furniture next() {
-            int i = (this.ordinal() + 1) % Furniture.values().length;
-            return Furniture.values()[i];
-        }
-    }
-    Furniture currentFurniture = Furniture.PLANE;
-
     @Override
     protected void onRender(long elapsedRealTime, double deltaTime) {
         // Update the AR object if necessary
         // Synchronize against concurrent access with the setter below.
         synchronized (this) {
-            if (objectPoseUpdated) {
-                // Place the 3D object in the location of the detected plane.
-                switch ( currentFurniture ) {
-                    case PLANE:
+            if (modelUpdated) {
+                // Anything missing is considered dead
+                for (float[] currentPlane : new HashSet<>(planeMap.keySet())) {
+                    if (!updatedList.contains(currentPlane)) {
+                        getCurrentScene().removeChild(planeMap.get(currentPlane));
+                        planeMap.remove(currentPlane);
+                    }
+                }
+
+                // Anything new is an add-on.
+                for (float[] currentPlane : updatedList) {
+                    if (!planeMap.containsKey(currentPlane)) {
+                        Plane plane = new Plane();
+                        plane.setMaterial(wallMaterial);
+                        plane.setTransparent(true);
+
+                        Matrix4 objectTransform = new Matrix4(currentPlane);
                         plane.setPosition(objectTransform.getTranslation());
                         plane.setOrientation(new Quaternion().fromMatrix(objectTransform).conjugate());
                         plane.setVisible(true);
-                        break;
-                    case CUBE:
-                        break;
-                    case SPHERE:
-                        break;
+                        getCurrentScene().addChild(plane);
+
+                        planeMap.put(currentPlane, plane);
+                    } else {
+                        // Possibly Reset the previous selected state
+                        planeMap.get(currentPlane).setMaterial(wallMaterial);
+                    }
                 }
-                currentFurniture = currentFurniture.next();
+
+                if (selectedPlane != null) selectedPlane.setMaterial(selectedWallMaterial);
+
+                // Clear out old lines.
+                if (!lines.isEmpty()) {
+                    for (Object3D line : lines) {
+                        getCurrentScene().removeChild(line);
+                    }
+                }
+                lines.clear();
+
+                Plane previous = null;
+                Action3<Action1<Object3D>, Object3D, Integer> addLine = buildAddLineAction();
+
+                for (float[] planeKey : updatedList) {
+                    Plane plane = planeMap.get(planeKey);
+                    addLine.call(o3d -> o3d.moveRight(0.5), plane, 0xffff0000);
+                    addLine.call(o3d -> o3d.moveForward(0.5), plane, 0xff00ff00);
+                    addLine.call(o3d -> o3d.moveUp(0.5), plane, 0xff0000ff);
+
+                    if (previous != null) {
+                        // Finds intersection of previous to new, or just gives a partial line segment.
+                        lines.add(buildPlaneIntersectLine(previous, plane));
+                    }
+
+                    previous = plane;
+                }
+                getCurrentScene().addChildren(lines);
+
+                // TODO: Let's process a list of transforms here.
 
                 // TODO: Add a way to orient things placed on the floor.
 
-                objectPoseUpdated = false;
+                modelUpdated = false;
             }
         }
 
         super.onRender(elapsedRealTime, deltaTime);
     }
 
+    @NonNull
+    private Action3<Action1<Object3D>, Object3D, Integer> buildAddLineAction() {
+        Stack<Vector3> linePoints = new Stack<>();
+        Vector3 start = new Vector3();
+        Object3D tmpEnd = new Object3D();
+
+        // Movement and color changes.
+        return (endPointAction, plane, color) -> {
+            start.setAll(plane.getPosition());
+            tmpEnd.setPosition(start);
+            tmpEnd.setOrientation(plane.getOrientation());
+            endPointAction.call(tmpEnd);
+            linePoints.clear();
+            linePoints.add(start);
+            linePoints.add(tmpEnd.getPosition());
+            Line3D line = new Line3D(linePoints, 10, color);
+            line.setMaterial(linesMaterial);
+            lines.add(line);
+        };
+    }
+
+    private Line3D buildPlaneIntersectLine(Plane leftPlane, Plane rightPlane) {
+        Vector3 start = new Vector3();
+        Vector3 hitPoint = new Vector3();
+        Object3D tmp = new Object3D();
+        tmp.setPosition(leftPlane.getPosition());
+        tmp.setOrientation(leftPlane.getOrientation());
+        tmp.moveRight(-0.5);
+
+        org.rajawali3d.math.Plane rightMathPlane = convertPlane(rightPlane);
+
+        start.setAll(leftPlane.getPosition());
+        boolean intersects = Intersector.intersectRayPlane(start, tmp.getPosition(), rightMathPlane, hitPoint);
+
+        Stack<Vector3> linePoints = new Stack<>();
+
+        Line3D newLine;
+        if (intersects) {
+            // Easier to follow if the angle indicator doesn't move up or down.
+            Vector3 endPos = new Vector3(rightPlane.getPosition());
+            endPos.y = hitPoint.y = start.y = 0;
+            linePoints.add(start);
+            linePoints.add(hitPoint);
+            linePoints.add(hitPoint);
+            linePoints.add(endPos);
+            newLine = new Line3D(linePoints, 40, new int[]{0xffffff00, 0xffffff00, 0xffff00ff, 0xffff00ff});
+        } else {
+            linePoints.add(start);
+            linePoints.add(tmp.getPosition());
+            newLine = new Line3D(linePoints, 40, 0xffff0000);
+        }
+
+        newLine.setMaterial(intersectMaterial);
+        return newLine;
+    }
+
+    @NonNull
+    private org.rajawali3d.math.Plane convertPlane(Plane primitivePlane) {
+        // TODO: There has to be a cleaner / more efficient way. Optimize.
+        Object3D tmp = new Object3D();
+        Vector3 a = new Vector3(), b = new Vector3(), c = new Vector3();
+        a.setAll(primitivePlane.getPosition());
+        tmp.setPosition(primitivePlane.getPosition());
+        tmp.setOrientation(primitivePlane.getOrientation());
+        tmp.moveRight(1);
+        b.setAll(tmp.getPosition());
+        tmp.setPosition(primitivePlane.getPosition());
+        tmp.setOrientation(primitivePlane.getOrientation());
+        tmp.moveUp(1);
+        c.setAll(tmp.getPosition());
+        return new org.rajawali3d.math.Plane(a, b, c);
+    }
+
     /**
      * Save the updated plane fit pose to update the AR object on the next render pass.
      * This is synchronized against concurrent access in the render loop above.
+     * public synchronized void updateObjectPose(float[] planeFitTransform) {
+     * // TODO: Let's process a list of transforms here.
+     * objectTransform = new Matrix4(planeFitTransform);
+     * modelUpdated = true;
+     * }
      */
-    public synchronized void updateObjectPose(float[] planeFitTransform) {
-        objectTransform = new Matrix4(planeFitTransform);
-        objectPoseUpdated = true;
 
+    public synchronized void updateWallPlanes(List<float[]> planeFitTransform) {
+        updatedList = new ArrayList<>(planeFitTransform);
+        modelUpdated = true;
+    }
+
+    // TODO: This synchronized setup sucks a bit, fix it one day.
+    public synchronized void updateSelectedTransform(float[] selectedFitTransform) {
+        if (planeMap.containsKey(selectedFitTransform)) {
+            selectedPlane = planeMap.get(selectedFitTransform);
+            // NOTE: Should not run into contention, since the render block is synchronized.
+            modelUpdated = true;
+        }
     }
 
     /**
@@ -247,29 +423,4 @@ public class FloorPlanEditRenderer extends Renderer {
     public void onTouchEvent(MotionEvent event) {
 
     }
-
-    private Object3D buildOBJ() {
-        Object3D o ;
-        LoaderOBJ objParser = new LoaderOBJ(mContext.getResources(), mTextureManager, R.raw.untitled_3_obj);
-        try {
-            objParser.parse();
-        } catch (ParsingException e) {
-            e.printStackTrace();
-        }
-
-        o = objParser.getParsedObject();
-        o.setPosition(0,-8,-1);
-
-        getCurrentScene().addChild(o);
-
-        Animation3D anim = new RotateOnAxisAnimation(Vector3.Axis.Y, 360);
-        anim.setDurationMilliseconds(16000);
-        anim.setRepeatMode(Animation.RepeatMode.INFINITE);
-        anim.setTransformable3D(o);
-        getCurrentScene().registerAnimation(anim);
-        anim.play();
-
-        return o;
-    }
-
 }

@@ -6,6 +6,7 @@ import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
+import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -20,66 +21,147 @@ import com.google.atap.tangoservice.TangoOutOfDateException;
 import com.google.atap.tangoservice.TangoPoseData;
 import com.google.atap.tangoservice.TangoXyzIjData;
 import com.jakewharton.rxrelay.PublishRelay;
-import com.shopify.posgo.utils.TangoMath;
 import com.projecttango.tangosupport.TangoPointCloudManager;
 import com.projecttango.tangosupport.TangoSupport;
+import com.shopify.posgo.utils.TangoMath;
 
+import org.rajawali3d.math.Matrix4;
+import org.rajawali3d.math.vector.Vector3;
 import org.rajawali3d.scene.ASceneFrameCallback;
 import org.rajawali3d.view.SurfaceView;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import butterknife.BindView;
+import butterknife.ButterKnife;
+import butterknife.OnClick;
 import rx.Subscription;
 import rx.android.schedulers.AndroidSchedulers;
 
-import static com.google.atap.tangoservice.Tango.*;
-import static com.projecttango.tangosupport.TangoSupport.*;
+import static com.google.atap.tangoservice.Tango.OnTangoUpdateListener;
+import static com.projecttango.tangosupport.TangoSupport.IntersectionPointPlaneModelPair;
+import static com.projecttango.tangosupport.TangoSupport.TANGO_SUPPORT_ENGINE_OPENGL;
+import static com.projecttango.tangosupport.TangoSupport.TANGO_SUPPORT_ENGINE_TANGO;
+import static com.projecttango.tangosupport.TangoSupport.TangoMatrixTransformData;
+import static com.projecttango.tangosupport.TangoSupport.getPoseAtTime;
 
 public class PosGoActivity extends AppCompatActivity implements View.OnTouchListener {
+
+    /**
+     * Think of these as states in the UI state machine.
+     *
+     * Mode ->
+     *      -> FloorplanModes
+     *      -> ProductModes
+     */
+    enum Mode {
+        FLOORPLAN,
+        PRODUCT
+    }
+
+    // MockProduct modes, Identical to FloorplanMode for now, but that could change.
+    enum ProductMode {
+        // VIEW -> [SELECTED, ADD]
+        VIEW,
+        // SELECTED -> [DELETE,ADD]
+        SELECTED,
+        // ADD -> [VIEW, SELECTED]
+        ADD
+    }
+
+    // Floorplan modes
+    enum FloorplanMode {
+        // VIEW -> [SELECTED, ADD]
+        // From view, select a plane, or add to last in list.
+        // NOTE: Add to last should auto-select last plane in list.
+        VIEW,
+        // SELECTED -> [DELETE,ADD]
+        // From here, you could delete the selected, or "add clockwise" to it.
+        SELECTED,
+        // ADD -> [VIEW, SELECTED]
+        // From here, you can go back to VIEW via 'Done' button.
+        // I think it would be nice to be able to jump back to 'selected' by tapping an existing plane, save a step.
+        ADD
+    }
+
+    interface PlaneTranformProcessor {
+
+        void processPlaneFitTransform(float[] planeFitTransform);
+    }
+
+    // MockProduct class as a placeholder for real products.
+    private static class MockProduct {
+        String name ;
+    }
 
     private static final String TAG = PosGoActivity.class.getSimpleName();
 
     private static final int INVALID_TEXTURE_ID = 0;
 
+    // *** Tango Service State ***
     private Tango tango;
     private TangoCameraIntrinsics tangoCameraIntrinsics;
     private TangoPointCloudManager tangoPointCloudManager;
-
     private boolean isConnected = false;
     private double cameraPoseTimestamp = 0;
 
-    // Texture rendering related fields
+    // *** GL Rendering Related ***
     // NOTE: Naming indicates which thread is in charge of updating this variable
     private int connectedTextureIdGlThread = INVALID_TEXTURE_ID;
     private AtomicBoolean isFrameAvailableTangoThread = new AtomicBoolean(false);
     private double rgbTimestampGlThread;
 
+    // *** UI Views and Widgets ***
+    @BindView(R.id.log_text)
+    protected TextView logTextView;
+    @BindView(R.id.parent)
+    protected LinearLayout parentLayout;
+    @BindView(R.id.addButton)
+    protected Button addButton;
+    @BindView(R.id.deleteButton)
+    protected Button deleteButton;
+    @BindView(R.id.doneButton)
+    protected Button doneButton;
+    @BindView(R.id.clearAllButton)
+    protected Button clearAllButton;
 
-    private TextView logTextView;
+    // ** View States **
+    private FloorplanMode currentFloorplanMode = FloorplanMode.VIEW;
 
+    // *** GL View Components ***
     private SurfaceView surfaceView;
-    private DemoRenderer renderer;
+    private FloorPlanEditRenderer renderer;
 
+    // *** 'Model' State Stores and Emitters ***
     private PublishRelay<String> log = PublishRelay.create();
     private Subscription logSubscription;
+    private List<float[]> wallPlanes = new ArrayList<>();
+    private Map<float[],MockProduct> productMap = new HashMap<>();
+    private float[] selectedPlane;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         setContentView(R.layout.activity_main);
-
-        logTextView = (TextView) findViewById(R.id.log_text);
+        ButterKnife.bind(this);
 
         surfaceView = new SurfaceView(this);
         surfaceView.setOnTouchListener(this);
-        renderer = new DemoRenderer(this);
+        renderer = new FloorPlanEditRenderer(this);
         surfaceView.setSurfaceRenderer(renderer);
-        ((LinearLayout)findViewById(R.id.parent)).addView(surfaceView);
+
+        parentLayout.addView(surfaceView);
 
         tangoPointCloudManager = new TangoPointCloudManager();
+
+        // Jump in "add" mode if sempty.
+        changeMode(wallPlanes.isEmpty()?FloorplanMode.ADD:FloorplanMode.VIEW);
     }
 
     @Override
@@ -87,11 +169,11 @@ public class PosGoActivity extends AppCompatActivity implements View.OnTouchList
         super.onResume();
 
         logSubscription = log
-            .throttleFirst(100, TimeUnit.MILLISECONDS)
-            .observeOn(AndroidSchedulers.mainThread())
-            .subscribe(
-                log -> logTextView.setText(log),
-                throwable -> Log.e(TAG, "log error", throwable));
+                .throttleFirst(100, TimeUnit.MILLISECONDS)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                        log -> logTextView.setText(log),
+                        throwable -> Log.e(TAG, "log error", throwable));
 
         if (!isConnected) {
             // runOnTangoReady is run on a new Thread().
@@ -128,46 +210,6 @@ public class PosGoActivity extends AppCompatActivity implements View.OnTouchList
         }
     }
 
-    @Override
-    public boolean onTouch(View view, MotionEvent motionEvent) {
-        if (motionEvent.getAction() == MotionEvent.ACTION_UP) {
-
-            // Calculate click location in u,v (0;1) coordinates.
-            float u = motionEvent.getX() / view.getWidth();
-            float v = motionEvent.getY() / view.getHeight();
-
-            try {
-                // Fit a plane on the clicked point using the latest point cloud data
-                // Synchronize against concurrent access to the RGB timestamp
-                // in the OpenGL thread and a possible service disconnection
-                // due to an onPause event.
-                float[] planeFitTransform;
-                // mainThread
-                synchronized (this) {
-                    planeFitTransform = doFitPlane(u, v, rgbTimestampGlThread);
-                }
-
-                if (planeFitTransform != null) {
-                    // Update the position of the rendered cube to the pose of the detected plane
-                    // This update is made thread safe by the renderer
-                    renderer.updateObjectPose(planeFitTransform);
-                }
-
-            } catch (TangoException t) {
-                Toast.makeText(getApplicationContext(),
-                    R.string.failed_measurement,
-                    Toast.LENGTH_SHORT).show();
-                Log.e(TAG, getString(R.string.failed_measurement), t);
-            } catch (SecurityException t) {
-                Toast.makeText(getApplicationContext(),
-                    R.string.failed_permissions,
-                    Toast.LENGTH_SHORT).show();
-                Log.e(TAG, getString(R.string.failed_permissions), t);
-            }
-        }
-        return true;
-    }
-
     /**
      * Configures the Tango service and connect it to callbacks.
      */
@@ -179,8 +221,8 @@ public class PosGoActivity extends AppCompatActivity implements View.OnTouchList
         // Defining the coordinate frame pairs we are interested in.
         ArrayList<TangoCoordinateFramePair> framePairs = new ArrayList<>();
         framePairs.add(new TangoCoordinateFramePair(
-            TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
-            TangoPoseData.COORDINATE_FRAME_DEVICE));
+                TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
+                TangoPoseData.COORDINATE_FRAME_DEVICE));
         tango.connectListener(framePairs, buildTangoUpdateListener());
 
         tangoCameraIntrinsics = tango.getCameraIntrinsics(TangoCameraIntrinsics.TANGO_CAMERA_COLOR);
@@ -274,24 +316,24 @@ public class PosGoActivity extends AppCompatActivity implements View.OnTouchList
                     // If there is a new RGB camera frame available, update the texture with it
                     if (isFrameAvailableTangoThread.compareAndSet(true, false)) {
                         rgbTimestampGlThread =
-                            tango.updateTexture(TangoCameraIntrinsics.TANGO_CAMERA_COLOR);
+                                tango.updateTexture(TangoCameraIntrinsics.TANGO_CAMERA_COLOR);
                     }
 
                     if (rgbTimestampGlThread > cameraPoseTimestamp) {
                         // Calculate the camera color pose at the camera frame update time in
                         // OpenGL engine.
                         TangoPoseData lastFramePose = getPoseAtTime(
-                            rgbTimestampGlThread,
-                            TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
-                            TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR,
-                            TANGO_SUPPORT_ENGINE_OPENGL, 0);
+                                rgbTimestampGlThread,
+                                TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
+                                TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR,
+                                TANGO_SUPPORT_ENGINE_OPENGL, 0);
                         if (lastFramePose.statusCode == TangoPoseData.POSE_VALID) {
                             // Update the camera pose from the renderer
                             renderer.updateRenderCameraPose(lastFramePose);
                             cameraPoseTimestamp = lastFramePose.timestamp;
                         } else {
                             Log.w(TAG, "Can't get device pose at time: " +
-                                rgbTimestampGlThread);
+                                    rgbTimestampGlThread);
                         }
                     }
                 }
@@ -314,6 +356,76 @@ public class PosGoActivity extends AppCompatActivity implements View.OnTouchList
         });
     }
 
+    @Override
+    public boolean onTouch(View view, MotionEvent motionEvent) {
+        switch (currentFloorplanMode) {
+            case VIEW:
+            case SELECTED:
+                // TODO: Select a surface
+                // TODO: Select a different surface, or potentially de-select.
+                handleViewModeTouch(view, motionEvent);
+                break;
+            case ADD:
+                handleAddModeTouch(view, motionEvent);
+                break;
+        }
+
+        return true;
+    }
+
+    private void handleViewModeTouch(View view, MotionEvent motionEvent) {
+        findPlane(view, motionEvent, planeFitTransform -> {
+            // TODO: We need to change this to a ray collision hit detection.
+            // TODO: Add code to detect proximity of touch vs existing ones.
+            Matrix4 objectTransform = new Matrix4(planeFitTransform);
+            Vector3 planeLocation = objectTransform.getTranslation();
+            for (float[] currentPlane : wallPlanes) {
+                if (planeLocation.distanceTo(new Matrix4(currentPlane).getTranslation()) < .5) {
+                    renderer.updateSelectedTransform(currentPlane);
+                    selectedPlane = currentPlane ;
+                    changeMode(FloorplanMode.SELECTED);
+                }
+            }
+//            Quaternion planeOrientation = new Quaternion().fromMatrix(objectTransform).conjugate();
+
+        });
+    }
+
+    private void handleAddModeTouch(View view, MotionEvent motionEvent) {
+        findPlane(view, motionEvent, planeFitTransform -> {
+            wallPlanes.add(planeFitTransform);
+            renderer.updateWallPlanes(wallPlanes);
+        });
+    }
+
+    private void findPlane(View view, MotionEvent motionEvent, PlaneTranformProcessor planeTranformProcessor) {
+        if (motionEvent.getAction() == MotionEvent.ACTION_UP) {
+            // Calculate click location in u,v (0;1) coordinates.
+            float u = motionEvent.getX() / view.getWidth();
+            float v = motionEvent.getY() / view.getHeight();
+
+            try {
+                // Fit a plane on the clicked point.
+                float[] planeFitTransform;
+
+                // mainThread
+                synchronized (this) {
+                    planeFitTransform = doFitPlane(u, v, rgbTimestampGlThread);
+                }
+
+                if (planeFitTransform != null) {
+                    planeTranformProcessor.processPlaneFitTransform(planeFitTransform);
+                }
+            } catch (TangoException t) {
+                Toast.makeText(getApplicationContext(), R.string.failed_measurement, Toast.LENGTH_SHORT).show();
+                Log.e(TAG, getString(R.string.failed_measurement), t);
+            } catch (SecurityException t) {
+                Toast.makeText(getApplicationContext(), R.string.failed_permissions, Toast.LENGTH_SHORT).show();
+                Log.e(TAG, getString(R.string.failed_permissions), t);
+            }
+        }
+    }
+
     /**
      * Use the TangoSupport library with point cloud data to calculate the plane
      * of the world feature pointed at the location the camera is looking.
@@ -330,28 +442,28 @@ public class PosGoActivity extends AppCompatActivity implements View.OnTouchList
         // time the user clicked, and the depth camera at the time the depth
         // cloud was acquired.
         TangoPoseData colorTdepthPose =
-            TangoSupport.calculateRelativePose(
-                rgbTimestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR,
-                xyzIj.timestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH);
+                TangoSupport.calculateRelativePose(
+                        rgbTimestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR,
+                        xyzIj.timestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH);
 
         // Perform plane fitting with the latest available point cloud data.
         IntersectionPointPlaneModelPair intersectionPointPlaneModelPair =
-            TangoSupport.fitPlaneModelNearClick(xyzIj, tangoCameraIntrinsics, colorTdepthPose, u, v);
+                TangoSupport.fitPlaneModelNearClick(xyzIj, tangoCameraIntrinsics, colorTdepthPose, u, v);
 
         // Get the transform from depth camera to OpenGL world at
         // the timestamp of the cloud.
         TangoMatrixTransformData transform =
-            TangoSupport.getMatrixTransformAtTime(
-                xyzIj.timestamp,
-                TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
-                TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
-                TANGO_SUPPORT_ENGINE_OPENGL,
-                TANGO_SUPPORT_ENGINE_TANGO);
+                TangoSupport.getMatrixTransformAtTime(
+                        xyzIj.timestamp,
+                        TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
+                        TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
+                        TANGO_SUPPORT_ENGINE_OPENGL,
+                        TANGO_SUPPORT_ENGINE_TANGO);
 
         if (transform.statusCode == TangoPoseData.POSE_VALID) {
             float[] openGlTPlane = TangoMath.calculatePlaneTransform(
-                intersectionPointPlaneModelPair.intersectionPoint,
-                intersectionPointPlaneModelPair.planeModel, transform.matrix);
+                    intersectionPointPlaneModelPair.intersectionPoint,
+                    intersectionPointPlaneModelPair.planeModel, transform.matrix);
 
             return openGlTPlane;
         } else {
@@ -370,9 +482,63 @@ public class PosGoActivity extends AppCompatActivity implements View.OnTouchList
         float translation[] = pose.getTranslationAsFloats();
         float orientation[] = pose.getRotationAsFloats();
 
-        stringBuilder.append(String.format("[%+3.3f,%+3.3f,%+3.3f]\n",translation[0],translation[1],translation[2]));
-        stringBuilder.append(String.format("(%+3.3f,%+3.3f,%+3.3f,%+3.3f)",orientation[0],orientation[1],orientation[2],orientation[3]));
+        stringBuilder.append(String.format("[%+3.3f,%+3.3f,%+3.3f]\n", translation[0], translation[1], translation[2]));
+        stringBuilder.append(String.format("(%+3.3f,%+3.3f,%+3.3f,%+3.3f)", orientation[0], orientation[1], orientation[2], orientation[3]));
 
         log.call(stringBuilder.toString());
+    }
+
+    @OnClick(R.id.addButton)
+    void onAddClick() {
+        changeMode(FloorplanMode.ADD);
+    }
+
+    @OnClick(R.id.deleteButton)
+    void onDeleteClick() {
+        if( selectedPlane!=null ) {
+            wallPlanes.remove(selectedPlane);
+            selectedPlane = null;
+            renderer.updateWallPlanes(wallPlanes);
+        }
+        changeMode(FloorplanMode.VIEW);
+    }
+
+    @OnClick(R.id.clearAllButton)
+    void onClearAllClick() {
+        wallPlanes.clear();
+        if (selectedPlane != null) {
+            selectedPlane = null;
+            changeMode(FloorplanMode.VIEW);
+        }
+        renderer.updateWallPlanes(wallPlanes);
+    }
+
+    @OnClick(R.id.doneButton)
+    void onDoneClick() {
+        changeMode(FloorplanMode.VIEW);
+    }
+
+    void changeMode(FloorplanMode floorplanMode) {
+        currentFloorplanMode = floorplanMode;
+        switch (floorplanMode) {
+            case VIEW:
+                addButton.setEnabled(true);
+                deleteButton.setEnabled(false);
+                clearAllButton.setEnabled(true);
+                doneButton.setEnabled(false);
+                break;
+            case SELECTED:
+                addButton.setEnabled(true);
+                deleteButton.setEnabled(true);
+                clearAllButton.setEnabled(false);
+                doneButton.setEnabled(true);
+                break;
+            case ADD:
+                addButton.setEnabled(false);
+                deleteButton.setEnabled(false);
+                clearAllButton.setEnabled(true);
+                doneButton.setEnabled(true);
+                break;
+        }
     }
 }
