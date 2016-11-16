@@ -9,5 +9,5 @@ include ':gvrLibs:videowidget'
 
 include ':commonLib'
 include ':rajaTangoLib'
-include ':tangoRoomEditor'
+include ':volumizer'
 

@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">Volumizer</string>
+
+    <string name="exception_out_of_date">"Tango service outdated!"</string>
+    <string name="failed_measurement">Failed to fit plane</string>
+    <string name="failed_permissions">Permissions required!</string>
+
+    <string name="load_adf_on">"Load ADF on"</string>
+    <string name="load_adf_off">"Load ADF off"</string>
+    <string name="learning_mode_off">"Learning mode off"</string>
+    <string name="learning_mode_on">"Learning mode on"</string>
+
+    <string name="start_config">Start</string>
+    <string name="manage_adfs">Manage ADFs</string>
+
+    <string name="arealearning_permission">"Area Learning permission needed!"</string>
+
+</resources>
