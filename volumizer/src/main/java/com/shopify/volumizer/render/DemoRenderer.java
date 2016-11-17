@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.shopify.volumizer;
+package com.shopify.volumizer.render;
 
 import android.content.Context;
 import android.graphics.Color;
@@ -24,6 +24,7 @@ import android.view.MotionEvent;
 import com.google.atap.tangoservice.TangoCameraIntrinsics;
 import com.google.atap.tangoservice.TangoPoseData;
 import com.kanawish.raja.raja.ScenePoseCalculator;
+import com.shopify.volumizer.R;
 
 import org.rajawali3d.Object3D;
 import org.rajawali3d.animation.Animation;
@@ -87,8 +88,7 @@ public class DemoRenderer extends Renderer {
 
         // We need to use Rajawali's {@code StreamingTexture} since it sets up the texture
         // for GL_TEXTURE_EXTERNAL_OES rendering
-        tangoCameraTexture =
-                new StreamingTexture("camera", (StreamingTexture.ISurfaceListener) null);
+        tangoCameraTexture = new StreamingTexture("camera", (StreamingTexture.ISurfaceListener) null);
         try {
             tangoCameraMaterial.addTexture(tangoCameraTexture);
             backgroundQuad.setMaterial(tangoCameraMaterial);

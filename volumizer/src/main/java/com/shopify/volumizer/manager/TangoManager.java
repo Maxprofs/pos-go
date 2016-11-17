@@ -1,6 +1,8 @@
 package com.shopify.volumizer.manager;
 
 import android.app.Application;
+import android.os.HandlerThread;
+import android.os.Looper;
 import android.support.annotation.MainThread;
 import android.support.annotation.NonNull;
 
@@ -14,8 +16,10 @@ import com.google.atap.tangoservice.TangoOutOfDateException;
 import com.google.atap.tangoservice.TangoPointCloudData;
 import com.google.atap.tangoservice.TangoPoseData;
 import com.google.atap.tangoservice.TangoXyzIjData;
+import com.projecttango.tangosupport.TangoPointCloudManager;
 import com.projecttango.tangosupport.TangoSupport;
 import com.shopify.volumizer.R;
+import com.shopify.volumizer.utils.TangoMath;
 
 import java.util.ArrayList;
 
@@ -24,13 +28,14 @@ import javax.inject.Singleton;
 
 import io.reactivex.Observable;
 import io.reactivex.android.schedulers.AndroidSchedulers;
-import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.disposables.Disposable;
 import io.reactivex.functions.Action;
 import io.reactivex.functions.Consumer;
-import io.reactivex.schedulers.Schedulers;
 import io.reactivex.subjects.PublishSubject;
 import timber.log.Timber;
+
+import static com.projecttango.tangosupport.TangoSupport.TANGO_SUPPORT_ENGINE_OPENGL;
+import static com.projecttango.tangosupport.TangoSupport.TANGO_SUPPORT_ENGINE_TANGO;
 
 /**
  * Ideally just abstracts the setup and teardown of Tango services.
@@ -39,6 +44,8 @@ import timber.log.Timber;
 public class TangoManager {
 
     @Inject Application appContext ;
+
+    @Inject TangoPointCloudManager tangoPointCloudManager;
 
     // TODO: This might be a clever thing, or a very bad idea. Ask someone to review.
     // The idea is to use this to execute jobs on the main thread.
@@ -52,7 +59,6 @@ public class TangoManager {
     private Observable<Object> sharedObservable;
     private Disposable disposableMain;
     private Disposable disposableInternal;
-
 
     public TangoManager() {
     }
@@ -69,19 +75,21 @@ public class TangoManager {
 
         // Creates a main-thread job queue.
         disposableMain = mainThreadActionQueue
-                .subscribeOn(AndroidSchedulers.mainThread())
+                .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
                         Action::run,
                         Timber::e,
-                        () -> Timber.i("mainThreadActionQueue onComplete() called."));
+                        () -> Timber.i("mainThreadActionQueue onComplete()"));
 
         // Create a job queue internal to tango manager.
+        HandlerThread handlerThread = new HandlerThread("CustomTangoManager");
+        handlerThread.start();
         disposableInternal = internalActionQueue
-                .subscribeOn(Schedulers.computation())
+                .observeOn(AndroidSchedulers.from(handlerThread.getLooper()))
                 .subscribe(
                         Action::run,
                         Timber::e,
-                        () -> Timber.i("internalActionQueue onComplete() called."));
+                        () -> Timber.i("internalActionQueue onComplete()"));
 
         tango = new Tango(appContext, () -> {
             internalActionQueue.onNext(() -> {
@@ -94,6 +102,7 @@ public class TangoManager {
                     framePairs.add(new TangoCoordinateFramePair(
                             TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
                             TangoPoseData.COORDINATE_FRAME_DEVICE));
+                    // NOTE: sharedObservable emits "on" the android main thread
                     sharedObservable = buildSourceSharedObservable(tango, framePairs);
 
                 } catch (TangoOutOfDateException e) {
@@ -154,7 +163,6 @@ public class TangoManager {
                     Tango.OnTangoUpdateListener updateListener = new Tango.OnTangoUpdateListener() {
                         @Override
                         public void onPoseAvailable(TangoPoseData tangoPoseData) {
-                            Timber.i(buildPoseLogMessage(tangoPoseData));
                             e.onNext(tangoPoseData);
                         }
 
@@ -183,23 +191,31 @@ public class TangoManager {
 
                     e.setCancellable(() -> tango.connectListener(null, null));
                 })
-                .share();
+                .share()
+                .observeOn(AndroidSchedulers.mainThread());
     }
 
-    @MainThread
+    // Thread safe
     public void stopTango() {
         Timber.d("tangoManager.stopTango()");
 
-        // Insures in-flight `tangoReadyHandler` won't execute.
-        disposableMain.dispose();
+        mainThreadActionQueue.onNext(() -> {
+            Timber.d("tangoManager.stopTango()->mainThreadActionQueue.onNext()");
 
-        internalActionQueue.onNext(() -> {
-            Timber.d("tangoManager.stopTango()->internalActionQueue.onNext()");
+            // Insures no `tangoReadyHandler` execute going forward.
+            disposableMain.dispose();
 
-            // Insures potentially in-flight `runOnTangoReady`/`onTangoReady` won't run
-            disposableInternal.dispose();
-            tango.disconnectCamera(TangoCameraIntrinsics.TANGO_CAMERA_COLOR);
-            tango.disconnect();
+            internalActionQueue.onNext(() -> {
+                Timber.d("tangoManager.stopTango()->internalActionQueue.onNext()");
+
+                // Insures no `runOnTangoReady` execute going forward.
+                disposableInternal.dispose();
+                tango.disconnectCamera(TangoCameraIntrinsics.TANGO_CAMERA_COLOR);
+                tango.disconnect();
+
+                Looper looper = Looper.myLooper();
+                if (looper != null) looper.quit();
+            });
         });
     }
 
@@ -219,7 +235,7 @@ public class TangoManager {
         return sharedObservable.ofType(TangoEvent.class);
     }
 
-    public Observable<TangoPointCloudData> getPointCloudData() {
+    public Observable<TangoPointCloudData> getPointCloudDataObservable() {
         return sharedObservable.ofType(TangoPointCloudData.class);
     }
 
@@ -241,6 +257,53 @@ public class TangoManager {
         metadata.set(TangoAreaDescriptionMetaData.KEY_NAME, name.getBytes());
         tango.saveAreaDescriptionMetadata(uuid, metadata);
     }
+
+    /**
+     * Use the TangoSupport library with point cloud data to calculate the plane
+     * of the world feature pointed at the location the camera is looking.
+     * It returns the transform of the fitted plane in a double array.
+     */
+    public float[] doFitPlane(float u, float v, double rgbTimestamp) {
+        TangoPointCloudData pointCloud = tangoPointCloudManager.getLatestPointCloud();
+
+        if (pointCloud == null) {
+            return null;
+        }
+
+        // We need to calculate the transform between the color camera at the
+        // time the user clicked, and the depth camera at the time the depth
+        // cloud was acquired.
+        TangoPoseData colorTdepthPose =
+                TangoSupport.calculateRelativePose(
+                        rgbTimestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR,
+                        pointCloud.timestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH);
+
+        // Perform plane fitting with the latest available point cloud data.
+        TangoSupport.IntersectionPointPlaneModelPair intersectionPointPlaneModelPair =
+                TangoSupport.fitPlaneModelNearPoint(pointCloud, colorTdepthPose, u, v);
+
+        // Get the transform from depth camera to OpenGL world at
+        // the timestamp of the cloud.
+        TangoSupport.TangoMatrixTransformData transform =
+                TangoSupport.getMatrixTransformAtTime(
+                        pointCloud.timestamp,
+                        TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
+                        TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
+                        TANGO_SUPPORT_ENGINE_OPENGL,
+                        TANGO_SUPPORT_ENGINE_TANGO);
+
+        if (transform.statusCode == TangoPoseData.POSE_VALID) {
+            float[] openGlTPlane = TangoMath.calculatePlaneTransform(
+                    intersectionPointPlaneModelPair.intersectionPoint,
+                    intersectionPointPlaneModelPair.planeModel, transform.matrix);
+
+            return openGlTPlane;
+        } else {
+            Timber.w("Can't get depth camera transform at time %.3f", pointCloud.timestamp);
+            return null;
+        }
+    }
+
 
     @NonNull
     public static String buildPoseLogMessage(TangoPoseData pose) {

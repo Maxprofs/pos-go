@@ -2,7 +2,7 @@
     <string name="app_name">Volumizer</string>
 
     <string name="exception_out_of_date">"Tango service outdated!"</string>
-    <string name="failed_measurement">Failed to fit plane</string>
+    <string name="failed_measurement">Failed to fit planeMat</string>
     <string name="failed_permissions">Permissions required!</string>
 
     <string name="load_adf_on">"Load ADF on"</string>

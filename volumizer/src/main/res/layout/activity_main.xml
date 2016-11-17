@@ -11,8 +11,8 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical" />
-<!--
 
+<!--
     <org.rajawali3d.surface.RajawaliSurfaceView
         android:id="@+id/ar_view"
         android:layout_width="match_parent"
@@ -38,29 +38,11 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content">
         <Button
-            android:id="@+id/addButton"
-            android:enabled="false"
+            android:id="@+id/actionButton"
+            android:enabled="true"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="ADD"/>
-        <Button
-            android:id="@+id/deleteButton"
-            android:enabled="false"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="DELETE"/>
-        <Button
-            android:id="@+id/clearAllButton"
-            android:enabled="false"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="CLEAR ALL"/>
-        <Button
-            android:id="@+id/doneButton"
-            android:enabled="false"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="DONE"/>
+            android:text="ACTION"/>
     </LinearLayout>
 
 </FrameLayout>

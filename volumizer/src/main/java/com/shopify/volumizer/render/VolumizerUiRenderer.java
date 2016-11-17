@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.shopify.volumizer;
+package com.shopify.volumizer.render;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -29,6 +29,7 @@ import android.view.MotionEvent;
 import com.google.atap.tangoservice.TangoCameraIntrinsics;
 import com.google.atap.tangoservice.TangoPoseData;
 import com.kanawish.raja.raja.ScenePoseCalculator;
+import com.shopify.volumizer.R;
 
 import org.rajawali3d.Object3D;
 import org.rajawali3d.lights.DirectionalLight;
@@ -62,11 +63,15 @@ import javax.microedition.khronos.opengles.GL10;
  * <p>
  * FIXME WIP just getting started
  */
-public class FloorPlanEditRenderer extends Renderer {
+public class VolumizerUiRenderer extends Renderer {
 
-    private static final String TAG = FloorPlanEditRenderer.class.getSimpleName();
+    private static final String TAG = VolumizerUiRenderer.class.getSimpleName();
 
     private static final float CUBE_SIDE_LENGTH = 0.5f;
+
+    // NOTE: Naming indicates which thread is in charge of updating this variable
+    private boolean isFrameAvailableTangoThread = false;
+    private double rgbTimestampGlThread;
 
     // Augmented Reality related fields
     private ATexture tangoCameraTexture;
@@ -86,7 +91,7 @@ public class FloorPlanEditRenderer extends Renderer {
     private Material linesMaterial;
     private Material intersectMaterial;
 
-    public FloorPlanEditRenderer(Context context) {
+    public VolumizerUiRenderer(Context context) {
         super(context);
     }
 
@@ -192,70 +197,67 @@ public class FloorPlanEditRenderer extends Renderer {
     @Override
     protected void onRender(long elapsedRealTime, double deltaTime) {
         // Update the AR object if necessary
-        // Synchronize against concurrent access with the setter below.
-        synchronized (this) {
-            if (modelUpdated) {
-                // Anything missing is considered dead
-                for (float[] currentPlane : new HashSet<>(planeMap.keySet())) {
-                    if (!updatedList.contains(currentPlane)) {
-                        getCurrentScene().removeChild(planeMap.get(currentPlane));
-                        planeMap.remove(currentPlane);
-                    }
+        if (modelUpdated) {
+            // Anything missing is considered dead
+            for (float[] currentPlane : new HashSet<>(planeMap.keySet())) {
+                if (!updatedList.contains(currentPlane)) {
+                    getCurrentScene().removeChild(planeMap.get(currentPlane));
+                    planeMap.remove(currentPlane);
                 }
-
-                // Anything new is an add-on.
-                for (float[] currentPlane : updatedList) {
-                    if (!planeMap.containsKey(currentPlane)) {
-                        Plane plane = new Plane();
-                        plane.setMaterial(wallMaterial);
-                        plane.setTransparent(true);
-
-                        Matrix4 objectTransform = new Matrix4(currentPlane);
-                        plane.setPosition(objectTransform.getTranslation());
-                        plane.setOrientation(new Quaternion().fromMatrix(objectTransform).conjugate());
-                        plane.setVisible(true);
-                        getCurrentScene().addChild(plane);
-
-                        planeMap.put(currentPlane, plane);
-                    } else {
-                        // Possibly Reset the previous selected state
-                        planeMap.get(currentPlane).setMaterial(wallMaterial);
-                    }
-                }
-
-                if (selectedPlane != null) selectedPlane.setMaterial(selectedWallMaterial);
-
-                // Clear out old lines.
-                if (!lines.isEmpty()) {
-                    for (Object3D line : lines) {
-                        getCurrentScene().removeChild(line);
-                    }
-                }
-                lines.clear();
-
-                Plane previous = null;
-
-                for (float[] planeKey : updatedList) {
-                    Plane plane = planeMap.get(planeKey);
-                    addLine(plane, 0xffff0000, o3d -> o3d.moveRight(0.5));
-                    addLine(plane, 0xff00ff00, o3d -> o3d.moveForward(0.5));
-                    addLine(plane, 0xff0000ff, o3d -> o3d.moveUp(0.5));
-
-                    if (previous != null) {
-                        // Finds intersection of previous to new, or just gives a partial line segment.
-                        lines.add(buildPlaneIntersectLine(previous, plane));
-                    }
-
-                    previous = plane;
-                }
-                getCurrentScene().addChildren(lines);
-
-                // TODO: Let's process a list of transforms here.
-
-                // TODO: Add a way to orient things placed on the floor.
-
-                modelUpdated = false;
             }
+
+            // Anything new is an add-on.
+            for (float[] currentPlane : updatedList) {
+                if (!planeMap.containsKey(currentPlane)) {
+                    Plane plane = new Plane();
+                    plane.setMaterial(wallMaterial);
+                    plane.setTransparent(true);
+
+                    Matrix4 objectTransform = new Matrix4(currentPlane);
+                    plane.setPosition(objectTransform.getTranslation());
+                    plane.setOrientation(new Quaternion().fromMatrix(objectTransform).conjugate());
+                    plane.setVisible(true);
+                    getCurrentScene().addChild(plane);
+
+                    planeMap.put(currentPlane, plane);
+                } else {
+                    // Possibly Reset the previous selected state
+                    planeMap.get(currentPlane).setMaterial(wallMaterial);
+                }
+            }
+
+            if (selectedPlane != null) selectedPlane.setMaterial(selectedWallMaterial);
+
+            // Clear out old lines.
+            if (!lines.isEmpty()) {
+                for (Object3D line : lines) {
+                    getCurrentScene().removeChild(line);
+                }
+            }
+            lines.clear();
+
+            Plane previous = null;
+
+            for (float[] planeKey : updatedList) {
+                Plane plane = planeMap.get(planeKey);
+                addLine(plane, 0xffff0000, o3d -> o3d.moveRight(0.5));
+                addLine(plane, 0xff00ff00, o3d -> o3d.moveForward(0.5));
+                addLine(plane, 0xff0000ff, o3d -> o3d.moveUp(0.5));
+
+                if (previous != null) {
+                    // Finds intersection of previous to new, or just gives a partial line segment.
+//                    lines.add(buildPlaneIntersectLine(previous, plane));
+                }
+
+                previous = plane;
+            }
+            getCurrentScene().addChildren(lines);
+
+            // TODO: Let's process a list of transforms here.
+
+            // TODO: Add a way to orient things placed on the floor.
+
+            modelUpdated = false;
         }
 
         super.onRender(elapsedRealTime, deltaTime);
@@ -320,7 +322,7 @@ public class FloorPlanEditRenderer extends Renderer {
     }
 
     @NonNull
-    private org.rajawali3d.math.Plane convertPlane(Plane primitivePlane) {
+    private static org.rajawali3d.math.Plane convertPlane(Plane primitivePlane) {
         // TODO: There has to be a cleaner / more efficient way. Optimize.
         Object3D tmp = new Object3D();
         Vector3 a = new Vector3(), b = new Vector3(), c = new Vector3();
@@ -346,13 +348,12 @@ public class FloorPlanEditRenderer extends Renderer {
      * }
      */
 
-    public synchronized void updateWallPlanes(List<float[]> planeFitTransform) {
+    public void updateWallPlanes(List<float[]> planeFitTransform) {
         updatedList = new ArrayList<>(planeFitTransform);
         modelUpdated = true;
     }
 
-    // TODO: This synchronized setup sucks a bit, fix it one day.
-    public synchronized void updateSelectedTransform(float[] selectedFitTransform) {
+    public void updateSelectedTransform(float[] selectedFitTransform) {
         if (planeMap.containsKey(selectedFitTransform)) {
             selectedPlane = planeMap.get(selectedFitTransform);
             // NOTE: Should not run into contention, since the render block is synchronized.
@@ -367,7 +368,7 @@ public class FloorPlanEditRenderer extends Renderer {
      * <p/>
      * NOTE: This must be called from the OpenGL render thread - it is not thread safe.
      */
-    public void updateRenderCameraPose(TangoPoseData cameraPose) {
+    void updateRenderCameraPose(TangoPoseData cameraPose) {
         float[] translation = cameraPose.getTranslationAsFloats();
         float[] rotation = cameraPose.getRotationAsFloats();
 
@@ -382,7 +383,7 @@ public class FloorPlanEditRenderer extends Renderer {
      * should be rendered.
      * NOTE: This must be called from the OpenGL render thread - it is not thread safe.
      */
-    public int getTextureId() {
+    int getTextureId() {
         return tangoCameraTexture == null ? -1 : tangoCameraTexture.getTextureId();
     }
 
@@ -396,7 +397,7 @@ public class FloorPlanEditRenderer extends Renderer {
         sceneCameraConfigured = false;
     }
 
-    public boolean isSceneCameraConfigured() {
+    boolean isSceneCameraConfigured() {
         return sceneCameraConfigured;
     }
 
@@ -404,7 +405,7 @@ public class FloorPlanEditRenderer extends Renderer {
      * Sets the projection matrix for the scene camera to match the parameters of the color camera,
      * provided by the {@code TangoCameraIntrinsics}.
      */
-    public void setProjectionMatrix(TangoCameraIntrinsics intrinsics) {
+    void setProjectionMatrix(TangoCameraIntrinsics intrinsics) {
         Matrix4 projectionMatrix = ScenePoseCalculator.calculateProjectionMatrix(
                 intrinsics.width, intrinsics.height,
                 intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy);
@@ -420,5 +421,21 @@ public class FloorPlanEditRenderer extends Renderer {
     @Override
     public void onTouchEvent(MotionEvent event) {
 
+    }
+
+    public void setFrameAvailable(boolean b) {
+        isFrameAvailableTangoThread = b ;
+    }
+
+    boolean isFrameAvailable() {
+        return isFrameAvailableTangoThread;
+    }
+
+    public double getRgbTimestampGlThread() {
+        return rgbTimestampGlThread;
+    }
+
+    void setRgbTimestampGlThread(double rgbTimestampGlThread) {
+        this.rgbTimestampGlThread = rgbTimestampGlThread;
     }
 }
