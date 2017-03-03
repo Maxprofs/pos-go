@@ -73,7 +73,7 @@ public class Trajectory extends Object3D {
         mVertexBuffer.put((float) vertex.z);
         mTrajectoryCount++;
         mLastPoint = vertex.clone();
-        mGeometry.setNumIndices(mTrajectoryCount);
+//        mGeometry.setNumIndices(mTrajectoryCount);
         mGeometry.getVertices().position(0);
         mGeometry.changeBufferData(mGeometry.getVertexBufferInfo(), mVertexBuffer, 0,
                 mTrajectoryCount * 3);

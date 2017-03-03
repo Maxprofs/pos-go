@@ -1,0 +1,9 @@
+#version 100
+precision mediump float;
+
+uniform mat4 u_ProjectionMatrix;
+attribute vec4 a_Position;
+
+void main() {
+    gl_Position = u_ProjectionMatrix * vec4(a_Position.x,a_Position.y,a_Position.z,1.0);
+}

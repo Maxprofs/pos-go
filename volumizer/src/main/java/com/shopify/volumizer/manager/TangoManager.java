@@ -16,10 +16,12 @@ import com.google.atap.tangoservice.TangoOutOfDateException;
 import com.google.atap.tangoservice.TangoPointCloudData;
 import com.google.atap.tangoservice.TangoPoseData;
 import com.google.atap.tangoservice.TangoXyzIjData;
+import com.pacoworks.rxsealedunions2.Union5;
+import com.pacoworks.rxsealedunions2.generic.UnionFactories;
 import com.projecttango.tangosupport.TangoPointCloudManager;
 import com.projecttango.tangosupport.TangoSupport;
+import com.projecttango.tangosupport.TangoSupport.IntersectionPointPlaneModelPair;
 import com.shopify.volumizer.R;
-import com.shopify.volumizer.utils.TangoMath;
 
 import java.util.ArrayList;
 
@@ -34,8 +36,7 @@ import io.reactivex.functions.Consumer;
 import io.reactivex.subjects.PublishSubject;
 import timber.log.Timber;
 
-import static com.projecttango.tangosupport.TangoSupport.TANGO_SUPPORT_ENGINE_OPENGL;
-import static com.projecttango.tangosupport.TangoSupport.TANGO_SUPPORT_ENGINE_TANGO;
+import static com.shopify.volumizer.utils.TangoMath.calculatePlaneTransform;
 
 /**
  * Ideally just abstracts the setup and teardown of Tango services.
@@ -43,7 +44,7 @@ import static com.projecttango.tangosupport.TangoSupport.TANGO_SUPPORT_ENGINE_TA
 @Singleton
 public class TangoManager {
 
-    @Inject Application appContext ;
+    @Inject Application appContext;
 
     @Inject TangoPointCloudManager tangoPointCloudManager;
 
@@ -56,16 +57,70 @@ public class TangoManager {
     // *** Tango Service State ***
     private Tango tango;
 
+    // Raw source of Tango callback events.
     private Observable<Object> sharedObservable;
+
     private Disposable disposableMain;
     private Disposable disposableInternal;
+
+    static final Union5.Factory<TangoPoseData, TangoXyzIjData, Integer,TangoEvent,TangoPointCloudData> FACTORY = UnionFactories.quintetFactory();
 
     public TangoManager() {
     }
 
+    private static Observable<Object> buildSourceSharedObservable(Tango tango, ArrayList<TangoCoordinateFramePair> framePairs) {
+        return Observable
+                .create(e -> {
+                    final Tango.TangoUpdateCallback tangoUpdateCallback = new Tango.TangoUpdateCallback() {
+                        @Override
+                        public void onPoseAvailable(TangoPoseData tangoPoseData) {
+                            e.onNext(tangoPoseData);
+                        }
+
+                        @Override
+                        public void onXyzIjAvailable(TangoXyzIjData tangoXyzIjData) {
+                            e.onNext(tangoXyzIjData);
+                        }
+
+                        @Override
+                        public void onFrameAvailable(int i) {
+                            e.onNext(i);
+                        }
+
+                        @Override
+                        public void onTangoEvent(TangoEvent tangoEvent) {
+                            e.onNext(tangoEvent);
+                        }
+
+                        @Override
+                        public void onPointCloudAvailable(TangoPointCloudData tangoPointCloudData) {
+                            e.onNext(tangoPointCloudData);
+                        }
+                    };
+
+                    tango.connectListener(framePairs, tangoUpdateCallback);
+
+                    e.setCancellable(() -> tango.connectListener(null, null));
+                })
+                .share()
+                .observeOn(AndroidSchedulers.mainThread());
+    }
+
+    @NonNull
+    public static String buildPoseLogMessage(TangoPoseData pose) {
+        StringBuilder stringBuilder = new StringBuilder();
+        float translation[] = pose.getTranslationAsFloats();
+        float orientation[] = pose.getRotationAsFloats();
+
+        stringBuilder.append(String.format("[%+3.3f,%+3.3f,%+3.3f]\n", translation[0], translation[1], translation[2]));
+        stringBuilder.append(String.format("(%+3.3f,%+3.3f,%+3.3f,%+3.3f)", orientation[0], orientation[1], orientation[2], orientation[3]));
+
+        return stringBuilder.toString();
+    }
+
     /**
      * NOTES - Threading considerations
-     *
+     * <p>
      * ... WiP, basically trying to use message queues vs the synchronize blocks in Tango code samples.
      *
      * @param tangoReadyHandler
@@ -104,7 +159,6 @@ public class TangoManager {
                             TangoPoseData.COORDINATE_FRAME_DEVICE));
                     // NOTE: sharedObservable emits "on" the android main thread
                     sharedObservable = buildSourceSharedObservable(tango, framePairs);
-
                 } catch (TangoOutOfDateException e) {
                     Timber.e(e, appContext.getString(R.string.exception_out_of_date));
                 }
@@ -113,7 +167,6 @@ public class TangoManager {
                 mainThreadActionQueue.onNext(() -> {
                     tangoReadyHandler.accept(tango);
                 });
-
             });
         });
     }
@@ -155,44 +208,6 @@ public class TangoManager {
         }
 */
         return config;
-    }
-
-    private static Observable<Object> buildSourceSharedObservable(Tango tango, ArrayList<TangoCoordinateFramePair> framePairs) {
-        return Observable
-                .create(e -> {
-                    Tango.OnTangoUpdateListener updateListener = new Tango.OnTangoUpdateListener() {
-                        @Override
-                        public void onPoseAvailable(TangoPoseData tangoPoseData) {
-                            e.onNext(tangoPoseData);
-                        }
-
-                        @Override
-                        public void onXyzIjAvailable(TangoXyzIjData tangoXyzIjData) {
-                            e.onNext(tangoXyzIjData);
-                        }
-
-                        @Override
-                        public void onFrameAvailable(int i) {
-                            e.onNext(i);
-                        }
-
-                        @Override
-                        public void onTangoEvent(TangoEvent tangoEvent) {
-                            e.onNext(tangoEvent);
-                        }
-
-                        @Override
-                        public void onPointCloudAvailable(TangoPointCloudData tangoPointCloudData) {
-                            e.onNext(tangoPointCloudData);
-                        }
-                    };
-
-                    tango.connectListener(framePairs, updateListener);
-
-                    e.setCancellable(() -> tango.connectListener(null, null));
-                })
-                .share()
-                .observeOn(AndroidSchedulers.mainThread());
     }
 
     // Thread safe
@@ -263,7 +278,7 @@ public class TangoManager {
      * of the world feature pointed at the location the camera is looking.
      * It returns the transform of the fitted plane in a double array.
      */
-    public float[] doFitPlane(float u, float v, double rgbTimestamp) {
+    public float[] doFitPlane(float u, float v, double rgbTimestamp, int displayRotation) {
         TangoPointCloudData pointCloud = tangoPointCloudManager.getLatestPointCloud();
 
         if (pointCloud == null) {
@@ -271,51 +286,35 @@ public class TangoManager {
         }
 
         // We need to calculate the transform between the color camera at the
-        // time the user clicked, and the depth camera at the time the depth
+        // time the user clicked and the depth camera at the time the depth
         // cloud was acquired.
-        TangoPoseData colorTdepthPose =
-                TangoSupport.calculateRelativePose(
-                        rgbTimestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR,
-                        pointCloud.timestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH);
+        TangoPoseData depthTcolorPose = TangoSupport.calculateRelativePose(
+                pointCloud.timestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
+                rgbTimestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR);
 
         // Perform plane fitting with the latest available point cloud data.
-        TangoSupport.IntersectionPointPlaneModelPair intersectionPointPlaneModelPair =
-                TangoSupport.fitPlaneModelNearPoint(pointCloud, colorTdepthPose, u, v);
+        double[] identityTranslation = {0.0, 0.0, 0.0};
+        double[] identityRotation = {0.0, 0.0, 0.0, 1.0};
+        IntersectionPointPlaneModelPair intersectionPointPlaneModelPair =
+                TangoSupport.fitPlaneModelNearPoint(pointCloud,
+                        identityTranslation, identityRotation, u, v, displayRotation,
+                        depthTcolorPose.translation, depthTcolorPose.rotation);
 
-        // Get the transform from depth camera to OpenGL world at
-        // the timestamp of the cloud.
+        // Get the transform from depth camera to OpenGL world at the timestamp of the cloud.
         TangoSupport.TangoMatrixTransformData transform =
-                TangoSupport.getMatrixTransformAtTime(
-                        pointCloud.timestamp,
-                        TangoPoseData.COORDINATE_FRAME_START_OF_SERVICE,
+                TangoSupport.getMatrixTransformAtTime(pointCloud.timestamp,
+                        TangoPoseData.COORDINATE_FRAME_AREA_DESCRIPTION,
                         TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
-                        TANGO_SUPPORT_ENGINE_OPENGL,
-                        TANGO_SUPPORT_ENGINE_TANGO);
-
+                        TangoSupport.TANGO_SUPPORT_ENGINE_OPENGL,
+                        TangoSupport.TANGO_SUPPORT_ENGINE_TANGO,
+                        TangoSupport.ROTATION_IGNORED);
         if (transform.statusCode == TangoPoseData.POSE_VALID) {
-            float[] openGlTPlane = TangoMath.calculatePlaneTransform(
+            return calculatePlaneTransform(
                     intersectionPointPlaneModelPair.intersectionPoint,
                     intersectionPointPlaneModelPair.planeModel, transform.matrix);
-
-            return openGlTPlane;
         } else {
-            Timber.w("Can't get depth camera transform at time %.3f", pointCloud.timestamp);
+            Timber.w("Can't get depth camera transform at time " + pointCloud.timestamp);
             return null;
         }
     }
-
-
-    @NonNull
-    public static String buildPoseLogMessage(TangoPoseData pose) {
-        StringBuilder stringBuilder = new StringBuilder();
-        float translation[] = pose.getTranslationAsFloats();
-        float orientation[] = pose.getRotationAsFloats();
-
-        stringBuilder.append(String.format("[%+3.3f,%+3.3f,%+3.3f]\n", translation[0], translation[1], translation[2]));
-        stringBuilder.append(String.format("(%+3.3f,%+3.3f,%+3.3f,%+3.3f)", orientation[0], orientation[1], orientation[2], orientation[3]));
-
-        return stringBuilder.toString();
-    }
-
-
 }

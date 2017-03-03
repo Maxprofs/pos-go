@@ -2,15 +2,15 @@ apply plugin: 'com.android.library'
 apply plugin: 'me.tatarka.retrolambda'
 
 android {
-    compileSdkVersion 24
-    buildToolsVersion "24.0.2"
+    compileSdkVersion 25
+    buildToolsVersion "25.0.2"
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
     defaultConfig {
         minSdkVersion 19
-        targetSdkVersion 24
+        targetSdkVersion 25
         versionCode 1
         versionName "1.0"
     }
@@ -38,8 +38,11 @@ dependencies {
     compile project(':commonLib')
 
 //    compile 'org.rajawali3d:rajawali:1.0.325@aar'
+//    compile 'org.rajawali3d:rajawali:1.1.517-SNAPSHOT@aar'
+    compile 'org.rajawali3d:rajawali:1.1.668@aar'
+
     // NOTE: Now trying to use latest rajawali libs.
-    compile 'org.rajawali3d:rajawali:1.1.517-SNAPSHOT@aar'
+//    compile 'org.rajawali3d:rajawali:1.1.777'
 
 
 }

@@ -12,15 +12,10 @@
         android:layout_height="match_parent"
         android:orientation="vertical" />
 
-<!--
-    <org.rajawali3d.surface.RajawaliSurfaceView
-        android:id="@+id/ar_view"
+    <android.opengl.GLSurfaceView
+        android:id="@+id/glSurfaceView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        surfaceview:frameRate="60.0"
-        surfaceview:isTransparent="true"
-        surfaceview:renderMode="RENDER_CONTINUOUS" />
--->
+        android:layout_height="match_parent" />
 
     <TextView
         android:id="@+id/log_text"
@@ -38,11 +33,23 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content">
         <Button
-            android:id="@+id/actionButton"
+            android:id="@+id/addButton"
             android:enabled="true"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="ACTION"/>
+            android:text="Add"/>
+        <Button
+            android:id="@+id/clipButton"
+            android:enabled="true"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Clip"/>
+        <Button
+            android:id="@+id/deleteButton"
+            android:enabled="true"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Delete"/>
     </LinearLayout>
 
 </FrameLayout>
