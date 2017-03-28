@@ -62,6 +62,7 @@ public class TangoMath {
      */
     public static float[] calculatePlaneTransform(double[] point, double normal[],
                                                   float[] openGlTdepth) {
+
         // Vector aligned to gravity.
         float[] openGlUp = new float[]{0, 1, 0, 0};
         float[] depthTOpenGl = new float[16];

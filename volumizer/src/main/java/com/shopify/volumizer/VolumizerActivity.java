@@ -9,16 +9,18 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
+import com.badlogic.gdx.math.Matrix4;
+import com.badlogic.gdx.math.Plane;
+import com.badlogic.gdx.math.Vector3;
 import com.google.atap.tangoservice.Tango;
 import com.google.atap.tangoservice.TangoCameraIntrinsics;
-import com.google.atap.tangoservice.TangoException;
 import com.google.atap.tangoservice.TangoPoseData;
 import com.projecttango.tangosupport.TangoPointCloudManager;
 import com.projecttango.tangosupport.TangoSupport;
 import com.shopify.volumizer.manager.TangoManager;
 import com.shopify.volumizer.render.CustomRenderer;
+import com.shopify.volumizer.utils.MatrixUtils;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -32,7 +34,6 @@ import butterknife.ButterKnife;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.disposables.Disposable;
-import io.reactivex.functions.Consumer;
 import io.reactivex.subjects.PublishSubject;
 import timber.log.Timber;
 import toothpick.Scope;
@@ -40,35 +41,41 @@ import toothpick.Toothpick;
 
 public class VolumizerActivity extends AppCompatActivity implements View.OnTouchListener {
 
+    // Used to cast from List<float[]> to float[][].
+    private final static float[][] PLANES_TO_ARRAY_TYPE = {};
+
+
     // *** UI Views and Widgets ***
     @BindView(R.id.log_text)
     protected TextView logTextView;
     @BindView(R.id.parent)
     protected LinearLayout parentLayout;
-    // *** GL View Components ***
     @BindView(R.id.glSurfaceView)
     protected GLSurfaceView glSurfaceView;
+
     // *** Tango Service State ***
     @Inject TangoManager tangoManager;
     @Inject TangoPointCloudManager tangoPointCloudManager;
-    private CustomRenderer renderer; // NOTE: Scene graph is not thread safe.
 
-
-    // *** 'Model' State Stores and Emitters ***
+    // *** Lifecycle ***
     private CompositeDisposable mainDisposables;
-
-    private List<float[]> planes = new ArrayList<>();
-    private float[] selectedPlane;
+    private Disposable glDisposable;
 
     //    private boolean isAreaLearningMode;
     //    private boolean isLoadAdfMode;
 
+    // ** OpenGL **
+    private PublishSubject<Runnable> glThreadActionQueue = PublishSubject.create();
+    private CustomRenderer renderer; // NOTE: Scene graph is not thread safe.
+
+
+    // *** State ***
+    private List<float[]> planes = new ArrayList<>();
+
+
     // TODO: This makes no sense in activity. Should probably move to renderer, expose 'threadsafe' methods/functions.
     // NOTE: Will be faking it here, since we can only really access glThread via glSurfaceView's queueEvent(Runnable) method.
-    private PublishSubject<Runnable> glThreadActionQueue = PublishSubject.create();
-    private Disposable glDisposable;
-
-    private int currentDisplayRotation;
+    private int displayRotation;
 
     /**
      * Function to calculate projection matrix from displayRotation.
@@ -114,7 +121,6 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
         return m;
     }
 
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -141,7 +147,7 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
                 () -> Timber.i("glThreadActionQueue onComplete()")
         );
 
-        currentDisplayRotation = getWindowManager().getDefaultDisplay().getRotation();
+        displayRotation = getWindowManager().getDefaultDisplay().getRotation();
 
         // Jump in "add" mode if empty.
 //        changeMode(planes.isEmpty() ? VolumizerMode.ADDING_PLANE : VolumizerMode.EDITING_PLANE);
@@ -181,32 +187,38 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
                 .subscribe(tangoPointCloudManager::updatePointCloud);
 
         // INITIALIZE -> GLSurfaceView.CustomRenderer
-        glThreadActionQueue.onNext(() -> {
-            renderer.setProjectionMatrix(calculateProjectionMatrix(currentDisplayRotation));
-
-            // We only connect to renderer once tango is connected, so,
-            // the OpenGL camera texture should always be ready at this point.
-            Timber.d("tango.connectTextureId( %d )", renderer.getCameraTextureId());
-            tango.connectTextureId(
-                    TangoCameraIntrinsics.TANGO_CAMERA_COLOR,
-                    renderer.getCameraTextureId());
-
-            // TODO: Add more of the cross-boundary 'gl init' code here, if needed.
-        });
+        glThreadActionQueue.onNext(() -> initCustomRenderer(tango));
 
         // CAMERA FRAME FEED -> GLSurfaceView.CustomRenderer
         tangoManager.getFrameObservable()
                 // Check if the frame available is for the camera we want and update its frame on the view.
                 .filter(cameraId -> cameraId == TangoCameraIntrinsics.TANGO_CAMERA_COLOR)
+                .map(cameraId -> (Runnable) () -> processCameraFrame(tango))
                 .doOnSubscribe(mainDisposables::add)
-                // Mark a camera frame as available for rendering in the OpenGL thread
-                .subscribe(
-                        cameraId -> glThreadActionQueue.onNext(
-                                () -> processCameraFrame(tango, currentDisplayRotation, renderer)
-                        ));
+                // Queue the process call on the GlThread.
+                .subscribe(glThreadActionQueue::onNext);
     }
 
-    private void processCameraFrame(Tango tango, int currentDisplayRotation, CustomRenderer renderer) {
+    private void initCustomRenderer(Tango tango) {
+        renderer.setProjectionMatrix(calculateProjectionMatrix(displayRotation));
+
+        // "Empty state" when we start.
+        float[] triangleTransform = new float[16];
+        Matrix.setIdentityM(triangleTransform, 0);
+        Matrix.translateM(triangleTransform, 0, 0, 0, -2.5f);
+        renderer.updatePlanes(new float[][]{triangleTransform});
+
+        // We only connect to renderer once tango is connected, so,
+        // the OpenGL camera texture should always be ready at this point.
+        Timber.d("tango.connectTextureId( %d )", renderer.getCameraTextureId());
+        tango.connectTextureId(
+                TangoCameraIntrinsics.TANGO_CAMERA_COLOR,
+                renderer.getCameraTextureId());
+
+        // TODO: Add more of the cross-boundary 'gl init' code here, if needed.
+    }
+
+    private void processCameraFrame(Tango tango) {
         final double rgbTimestamp = tango.updateTexture(TangoCameraIntrinsics.TANGO_CAMERA_COLOR);
 
         TangoSupport.TangoMatrixTransformData transform =
@@ -216,27 +228,23 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
                         TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR,
                         TangoSupport.TANGO_SUPPORT_ENGINE_OPENGL,
                         TangoSupport.TANGO_SUPPORT_ENGINE_OPENGL,
-                        currentDisplayRotation);
+                        displayRotation);
 
         if (transform.statusCode == TangoPoseData.POSE_VALID) {
             renderer.updateViewMatrix(transform.matrix);
-
-            float[] triangleTransform = new float[16];
-            Matrix.setIdentityM(triangleTransform, 0);
-            Matrix.translateM(triangleTransform, 0, 0, 0, -2.5f);
-            renderer.setTriangleTransform(triangleTransform);
-
             renderer.updateScene(rgbTimestamp);
         } else {
+            // NOTE: Shaking the device hard seems to flip the status code to 'initializing' and it never comes back?
+
             // When the pose status is not valid, it indicates tracking
             // has been lost. In this case, we simply stop rendering.
-            //
+
             // This is also the place to display UI to suggest the user
             // walk to recover tracking.
-            Timber.w("Could not get a valid transform at time " + rgbTimestamp);
+            Timber.w("transform { statusCode: %d, timestamp: %f }, rgbTimestamp %f ",
+                    transform.statusCode, transform.timestamp, rgbTimestamp);
         }
     }
-
 
     @Override
     protected void onPause() {
@@ -256,40 +264,29 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
 
     @Override
     public boolean onTouch(View view, MotionEvent motionEvent) {
-        // TODO:
+
+        if (motionEvent.getAction() == MotionEvent.ACTION_UP) {
+            // Calculate click location in u,v (0;1) coordinates.
+            float u = motionEvent.getX() / view.getWidth();
+            float v = motionEvent.getY() / view.getHeight();
+
+            float[] planeFitTransform = tangoManager.doFitPlane(u, v, renderer.getRgbTimestamp(), displayRotation);
+            if (planeFitTransform != null) {
+                planes.add(planeFitTransform);
+                renderer.updatePlanes(planes.toArray(PLANES_TO_ARRAY_TYPE));
+            }
+        }
+
         return true;
     }
 
-    // Plane selector
-    private void handleViewModeTouch(View view, MotionEvent motionEvent) {
-        findPlane(0.5f, 0.5f, planeFitTransform -> {
+    private void consumeTransform(float[] transform) {
+        Timber.i(MatrixUtils.matrixToString(transform));
+//        Plane
+        final Matrix4 mat = new Matrix4(transform);
+        final Vector3 translation = mat.getTranslation(new Vector3());
 
-            // TODO: We need to change this to a ray collision hit detection.
-            // TODO: Add code to detect proximity of touch vs existing ones.
-
-        });
+        Vector3
     }
 
-    // TODO: Think of moving this to renderer, and refactor that one to better split model / business logic from rendering...
-    // The 'domain seam' here might be something like
-    private void findPlane(float u, float v, Consumer<float[]> planeProcessor) {
-        glThreadActionQueue.onNext(() -> {
-            try {
-                // Fit a plane on the clicked point.
-                float[] planeFitTransform = tangoManager.doFitPlane(u, v, renderer.getRgbTimestamp(), currentDisplayRotation);
-
-                if (planeFitTransform != null) {
-                    planeProcessor.accept(planeFitTransform);
-                }
-            } catch (TangoException e) {
-                Toast.makeText(getApplicationContext(), R.string.failed_measurement, Toast.LENGTH_SHORT).show();
-                Timber.e(getString(R.string.failed_measurement));
-            } catch (SecurityException e) {
-                Toast.makeText(getApplicationContext(), R.string.failed_permissions, Toast.LENGTH_SHORT).show();
-                Timber.e(e, getString(R.string.failed_permissions));
-            } catch (Exception e) {
-                Timber.e(e, "Unknown issue");
-            }
-        });
-    }
 }

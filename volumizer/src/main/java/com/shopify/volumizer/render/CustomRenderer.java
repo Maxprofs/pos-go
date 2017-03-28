@@ -5,28 +5,24 @@ import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
 
-import com.shopify.volumizer.utils.MatrixUtils;
-
 import java.io.IOException;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
-
-import timber.log.Timber;
 
 /**
  */
 public class CustomRenderer implements GLSurfaceView.Renderer {
 
     private final OpenGlCameraPreview glCameraPreview;
-    private final OpenGlTriangle glTriangle;
+    private final OpenGlRectangle glPlane;
 
+    float[][] planeTransforms = new float[][]{};
     private double rgbTimestamp;
 
-
     public CustomRenderer(Context context) throws IOException {
-        glCameraPreview = new OpenGlCameraPreview();
-        glTriangle = new OpenGlTriangle(context);
+        glCameraPreview = new OpenGlCameraPreview(context);
+        glPlane = new OpenGlRectangle(context);
     }
 
     @Override
@@ -44,7 +40,7 @@ public class CustomRenderer implements GLSurfaceView.Renderer {
         GLES20.glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
 
         glCameraPreview.setUpProgramAndBuffers();
-        glTriangle.setUpProgramAndBuffers();
+        glPlane.setUpProgramAndBuffers();
 
 //        final BitmapFactory.Options options = new BitmapFactory.Options();
 //        options.inScaled = false;
@@ -68,7 +64,10 @@ public class CustomRenderer implements GLSurfaceView.Renderer {
         GLES20.glDepthMask(true);
         GLES20.glCullFace(GLES20.GL_BACK);
 
-        glTriangle.draw();
+        for (float[] planeTransform : planeTransforms) {
+            glPlane.setModelMatrix(planeTransform);
+            glPlane.draw();
+        }
     }
 
     public int getCameraTextureId() {
@@ -81,16 +80,7 @@ public class CustomRenderer implements GLSurfaceView.Renderer {
      */
     public void setProjectionMatrix(float[] projectionMatrix) {
         // setProjectionMatrix(projectionMatrix) on scene objects.
-        glTriangle.setProjectionMatrix(projectionMatrix);
-    }
-
-    /**
-     * NOTE: QUESTION - Can this ever happen in our setup?
-     * Update background texture's UV coordinates when device orientation is changed. i.e change
-     * between landscape and portrait mode.
-     */
-    public void updateColorCameraTextureUv(int rotation) {
-        glCameraPreview.updateTextureUv(rotation);
+        glPlane.setProjectionMatrix(projectionMatrix);
     }
 
     /**
@@ -103,17 +93,20 @@ public class CustomRenderer implements GLSurfaceView.Renderer {
         Matrix.invertM(viewMatrix, 0, ssTcamera, 0);
 
         // setViewMatrix(viewMatrix) on scene objects.
-        glTriangle.setViewMatrix(viewMatrix);
+        glPlane.setViewMatrix(viewMatrix);
     }
 
-    public void updateScene(double rgbTimestamp) {
-        this.rgbTimestamp = rgbTimestamp;
-
-        // Update scene object model transforms in relation to time if appropriate.
+    public void updateScene(double rgbT) {
+        rgbTimestamp = rgbT;
+        // Update scene object model transforms in relation to time if appropriate...
     }
 
-    public void setTriangleTransform(float[] triangleTransform) {
-        glTriangle.setModelMatrix(triangleTransform);
+    public void updatePlanes(float[][] planes) {
+        planeTransforms = planes;
+    }
+
+    public void setPlaneTransform(float[] transform) {
+        glPlane.setModelMatrix(transform);
     }
 
     public double getRgbTimestamp() {

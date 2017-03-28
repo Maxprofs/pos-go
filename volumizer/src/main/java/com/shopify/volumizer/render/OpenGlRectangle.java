@@ -11,31 +11,34 @@ import java.io.IOException;
 /**
  */
 
-public class OpenGlTriangle {
+public class OpenGlRectangle {
 
     private static final String U_VIEW_PROJECTION_MATRIX = "u_ProjectionMatrix";
     private static final String A_POSITION = "a_Position";
 
-    private static float TRIANGLE_VERTICES[] = {
-            0.0f, 0.4330f, 0.0f,   // top
-            -0.5f, -0.4330f, 0.0f,   // bottom left
-            0.5f, -0.4330f, 0.0f    // bottom right
+    private static float VERTICES[] = {
+            0.5f, 0.5f, 0.0f,   // top right
+            -0.5f, 0.5f, 0.0f,   // top left
+            -0.5f, -0.5f, 0.0f,   // bottom left
+            0.5f, -0.5f, 0.0f    // bottom right
     };
 
-    private static short INDICES[] = {0, 1, 2};
+    private static short INDICES[] = {1, 2, 0, 3};
 
     private final OpenGlMesh glMesh;
+
     private final String vertexShader;
     private final String fragmentShader;
     private int programHandle;
+
     private float[] modelMatrix = new float[16];
     private float[] viewMatrix = new float[16];
     private float[] projectionMatrix = new float[16];
 
-    OpenGlTriangle(Context context) throws IOException {
-        glMesh = new OpenGlMesh(TRIANGLE_VERTICES, 3, new float[]{}, 0, INDICES);
+    OpenGlRectangle(Context context) throws IOException {
+        glMesh = new OpenGlMesh(VERTICES, 3, new float[]{}, 0, INDICES);
         vertexShader = FileUtils.loadStringFromAsset(context, "shaders/gles2.common.vertshader");
-        fragmentShader = FileUtils.loadStringFromAsset(context, "shaders/gles2.triangle.fragshader");
+        fragmentShader = FileUtils.loadStringFromAsset(context, "shaders/gles2.planeui.fragshader");
     }
 
     void setUpProgramAndBuffers() {

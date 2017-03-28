@@ -1,29 +1,33 @@
 package com.shopify.volumizer.render;
 
+import android.content.Context;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
 
 import com.projecttango.tangosupport.TangoSupport;
+import com.shopify.volumizer.utils.FileUtils;
+
+import java.io.IOException;
 
 public class OpenGlCameraPreview {
 
-    private final String mVss =
+    private final String mVss ; /*=
             "attribute vec2 a_Position;\n" +
             "attribute vec2 a_TexCoord;\n" +
             "varying vec2 v_TexCoord;\n" +
             "void main() {\n" +
             "  v_TexCoord = a_TexCoord;\n" +
             "  gl_Position = vec4(a_Position.x, a_Position.y, 0.0, 1.0);\n" +
-            "}";
+            "}";*/
 
-    private final String mFss =
+    private final String mFss ;/*=
             "#extension GL_OES_EGL_image_external : require\n" +
             "precision mediump float;\n" +
             "uniform samplerExternalOES u_Texture;\n" +
             "varying vec2 v_TexCoord;\n" +
             "void main() {\n" +
             "  gl_FragColor = texture2D(u_Texture,v_TexCoord);\n" +
-            "}";
+            "}";*/
 
     private final float[] textureCoords0 =
             new float[]{1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f};
@@ -32,7 +36,10 @@ public class OpenGlCameraPreview {
     private int[] mTextures = new int[1];
     private int mProgram;
 
-    public OpenGlCameraPreview() {
+    public OpenGlCameraPreview(Context context) throws IOException {
+        mVss = FileUtils.loadStringFromAsset(context, "shaders/gles2.colcam.vertshader");
+        mFss = FileUtils.loadStringFromAsset(context, "shaders/gles2.colcam.fragshader");
+
         mTextures[0] = 0;
         // Vertices positions.
         float[] vtmp = {1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};

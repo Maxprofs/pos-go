@@ -1,0 +1,9 @@
+#version 100
+
+precision mediump float;
+
+void main() {
+    // gl_FragColor = vec4(red, green, blue, alpha)
+
+    gl_FragColor = vec4(mod(gl_FragCoord.x,100.0)/100.0,1.0,0.0,0.3);
+}

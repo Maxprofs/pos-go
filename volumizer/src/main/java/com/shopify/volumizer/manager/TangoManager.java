@@ -11,6 +11,7 @@ import com.google.atap.tangoservice.TangoAreaDescriptionMetaData;
 import com.google.atap.tangoservice.TangoCameraIntrinsics;
 import com.google.atap.tangoservice.TangoConfig;
 import com.google.atap.tangoservice.TangoCoordinateFramePair;
+import com.google.atap.tangoservice.TangoErrorException;
 import com.google.atap.tangoservice.TangoEvent;
 import com.google.atap.tangoservice.TangoOutOfDateException;
 import com.google.atap.tangoservice.TangoPointCloudData;
@@ -44,26 +45,20 @@ import static com.shopify.volumizer.utils.TangoMath.calculatePlaneTransform;
 @Singleton
 public class TangoManager {
 
+    static final Union5.Factory<TangoPoseData, TangoXyzIjData, Integer, TangoEvent, TangoPointCloudData> FACTORY = UnionFactories.quintetFactory();
     @Inject Application appContext;
-
     @Inject TangoPointCloudManager tangoPointCloudManager;
-
     // TODO: This might be a clever thing, or a very bad idea. Ask someone to review.
     // The idea is to use this to execute jobs on the main thread.
     private PublishSubject<Action> mainThreadActionQueue = PublishSubject.create();
     // Tango `connect()` can't run off of main thread,
     private PublishSubject<Action> internalActionQueue = PublishSubject.create();
-
     // *** Tango Service State ***
     private Tango tango;
-
     // Raw source of Tango callback events.
     private Observable<Object> sharedObservable;
-
     private Disposable disposableMain;
     private Disposable disposableInternal;
-
-    static final Union5.Factory<TangoPoseData, TangoXyzIjData, Integer,TangoEvent,TangoPointCloudData> FACTORY = UnionFactories.quintetFactory();
 
     public TangoManager() {
     }
@@ -113,7 +108,8 @@ public class TangoManager {
         float orientation[] = pose.getRotationAsFloats();
 
         stringBuilder.append(String.format("[%+3.3f,%+3.3f,%+3.3f]\n", translation[0], translation[1], translation[2]));
-        stringBuilder.append(String.format("(%+3.3f,%+3.3f,%+3.3f,%+3.3f)", orientation[0], orientation[1], orientation[2], orientation[3]));
+        stringBuilder.append(String.format("(%+3.3f,%+3.3f,%+3.3f,%+3.3f)\n", orientation[0], orientation[1], orientation[2], orientation[3]));
+        stringBuilder.append(pose.toString());
 
         return stringBuilder.toString();
     }
@@ -279,41 +275,53 @@ public class TangoManager {
      * It returns the transform of the fitted plane in a double array.
      */
     public float[] doFitPlane(float u, float v, double rgbTimestamp, int displayRotation) {
+        Timber.i("doFitPane(%f,%f,%f,%d)", u, v, rgbTimestamp, displayRotation);
+
         TangoPointCloudData pointCloud = tangoPointCloudManager.getLatestPointCloud();
 
         if (pointCloud == null) {
+            Timber.i("pointCloud == null");
             return null;
         }
 
-        // We need to calculate the transform between the color camera at the
-        // time the user clicked and the depth camera at the time the depth
-        // cloud was acquired.
-        TangoPoseData depthTcolorPose = TangoSupport.calculateRelativePose(
-                pointCloud.timestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
-                rgbTimestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR);
+        Timber.i("pointCloud.timestamp == %s", pointCloud.timestamp);
 
-        // Perform plane fitting with the latest available point cloud data.
-        double[] identityTranslation = {0.0, 0.0, 0.0};
-        double[] identityRotation = {0.0, 0.0, 0.0, 1.0};
-        IntersectionPointPlaneModelPair intersectionPointPlaneModelPair =
-                TangoSupport.fitPlaneModelNearPoint(pointCloud,
-                        identityTranslation, identityRotation, u, v, displayRotation,
-                        depthTcolorPose.translation, depthTcolorPose.rotation);
+        try {
+            // We need to calculate the transform between the color camera at the
+            // time the user clicked and the depth camera at the time the depth
+            // cloud was acquired.
+            TangoPoseData depthTcolorPose = TangoSupport.calculateRelativePose(
+                    pointCloud.timestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
+                    rgbTimestamp, TangoPoseData.COORDINATE_FRAME_CAMERA_COLOR);
 
-        // Get the transform from depth camera to OpenGL world at the timestamp of the cloud.
-        TangoSupport.TangoMatrixTransformData transform =
-                TangoSupport.getMatrixTransformAtTime(pointCloud.timestamp,
-                        TangoPoseData.COORDINATE_FRAME_AREA_DESCRIPTION,
-                        TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
-                        TangoSupport.TANGO_SUPPORT_ENGINE_OPENGL,
-                        TangoSupport.TANGO_SUPPORT_ENGINE_TANGO,
-                        TangoSupport.ROTATION_IGNORED);
-        if (transform.statusCode == TangoPoseData.POSE_VALID) {
-            return calculatePlaneTransform(
-                    intersectionPointPlaneModelPair.intersectionPoint,
-                    intersectionPointPlaneModelPair.planeModel, transform.matrix);
-        } else {
-            Timber.w("Can't get depth camera transform at time " + pointCloud.timestamp);
+            // Perform plane fitting with the latest available point cloud data.
+            double[] identityTranslation = {0.0, 0.0, 0.0};
+            double[] identityRotation = {0.0, 0.0, 0.0, 1.0};
+            IntersectionPointPlaneModelPair intersectionPointPlaneModelPair =
+                    TangoSupport.fitPlaneModelNearPoint(pointCloud,
+                            identityTranslation, identityRotation, u, v, displayRotation,
+                            depthTcolorPose.translation, depthTcolorPose.rotation);
+
+            // Get the transform from depth camera to OpenGL world at the timestamp of the cloud.
+            TangoSupport.TangoMatrixTransformData transform =
+                    TangoSupport.getMatrixTransformAtTime(pointCloud.timestamp,
+                            TangoPoseData.COORDINATE_FRAME_AREA_DESCRIPTION,
+                            TangoPoseData.COORDINATE_FRAME_CAMERA_DEPTH,
+                            TangoSupport.TANGO_SUPPORT_ENGINE_OPENGL,
+                            TangoSupport.TANGO_SUPPORT_ENGINE_TANGO,
+                            TangoSupport.ROTATION_IGNORED);
+
+            if (transform.statusCode == TangoPoseData.POSE_VALID) {
+                return calculatePlaneTransform(
+                        intersectionPointPlaneModelPair.intersectionPoint,
+                        intersectionPointPlaneModelPair.planeModel, transform.matrix);
+            } else {
+                Timber.w("Can't get depth camera transform at time " + pointCloud.timestamp);
+                return null;
+            }
+
+        } catch (TangoErrorException e) {
+            Timber.e(e);
             return null;
         }
     }
