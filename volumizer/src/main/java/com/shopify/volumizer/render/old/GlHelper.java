@@ -1,10 +1,10 @@
-package com.shopify.volumizer.render;
+package com.shopify.volumizer.render.old;
 
 import android.opengl.GLES20;
 
 import timber.log.Timber;
 
-public class OpenGlHelper {
+public class GlHelper {
 
     public static int createProgram(String vertexShader, String fragmentShader) {
         int program = GLES20.glCreateProgram();

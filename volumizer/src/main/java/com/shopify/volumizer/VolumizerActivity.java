@@ -11,16 +11,15 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.badlogic.gdx.math.Matrix4;
-import com.badlogic.gdx.math.Plane;
 import com.badlogic.gdx.math.Vector3;
 import com.google.atap.tangoservice.Tango;
 import com.google.atap.tangoservice.TangoCameraIntrinsics;
 import com.google.atap.tangoservice.TangoPoseData;
+import com.kanawish.gl.utils.MatrixUtils;
 import com.projecttango.tangosupport.TangoPointCloudManager;
 import com.projecttango.tangosupport.TangoSupport;
 import com.shopify.volumizer.manager.TangoManager;
-import com.shopify.volumizer.render.CustomRenderer;
-import com.shopify.volumizer.utils.MatrixUtils;
+import com.shopify.volumizer.render.old.CustomRendererV1;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -66,7 +65,7 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
 
     // ** OpenGL **
     private PublishSubject<Runnable> glThreadActionQueue = PublishSubject.create();
-    private CustomRenderer renderer; // NOTE: Scene graph is not thread safe.
+    private CustomRendererV1 renderer; // NOTE: Scene graph is not thread safe.
 
 
     // *** State ***
@@ -133,7 +132,7 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
         // Setup our GL rendering surfaces.
         glSurfaceView.setEGLContextClientVersion(2);
         try {
-            renderer = new CustomRenderer(getApplicationContext());
+            renderer = new CustomRendererV1(getApplicationContext());
         } catch (IOException e) {
             new RuntimeException("Oh crap.");
         }
@@ -186,10 +185,10 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
                 .doOnSubscribe(mainDisposables::add)
                 .subscribe(tangoPointCloudManager::updatePointCloud);
 
-        // INITIALIZE -> GLSurfaceView.CustomRenderer
+        // INITIALIZE -> GLSurfaceView.CustomRendererV1
         glThreadActionQueue.onNext(() -> initCustomRenderer(tango));
 
-        // CAMERA FRAME FEED -> GLSurfaceView.CustomRenderer
+        // CAMERA FRAME FEED -> GLSurfaceView.CustomRendererV1
         tangoManager.getFrameObservable()
                 // Check if the frame available is for the camera we want and update its frame on the view.
                 .filter(cameraId -> cameraId == TangoCameraIntrinsics.TANGO_CAMERA_COLOR)
@@ -286,7 +285,7 @@ public class VolumizerActivity extends AppCompatActivity implements View.OnTouch
         final Matrix4 mat = new Matrix4(transform);
         final Vector3 translation = mat.getTranslation(new Vector3());
 
-        Vector3
+//        Vector3
     }
 
 }

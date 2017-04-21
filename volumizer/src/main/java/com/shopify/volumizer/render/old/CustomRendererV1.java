@@ -1,4 +1,4 @@
-package com.shopify.volumizer.render;
+package com.shopify.volumizer.render.old;
 
 import android.content.Context;
 import android.opengl.GLES20;
@@ -12,17 +12,17 @@ import javax.microedition.khronos.opengles.GL10;
 
 /**
  */
-public class CustomRenderer implements GLSurfaceView.Renderer {
+public class CustomRendererV1 implements GLSurfaceView.Renderer {
 
-    private final OpenGlCameraPreview glCameraPreview;
-    private final OpenGlRectangle glPlane;
+    private final GlCameraPreview glCameraPreview;
+    private final GlRectangle glPlane;
 
     float[][] planeTransforms = new float[][]{};
     private double rgbTimestamp;
 
-    public CustomRenderer(Context context) throws IOException {
-        glCameraPreview = new OpenGlCameraPreview(context);
-        glPlane = new OpenGlRectangle(context);
+    public CustomRendererV1(Context context) throws IOException {
+        glCameraPreview = new GlCameraPreview(context);
+        glPlane = new GlRectangle(context);
     }
 
     @Override

@@ -1,15 +1,17 @@
-package com.shopify.volumizer.render;
+package com.shopify.volumizer.render.old;
 
 import android.content.Context;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
 
 import com.projecttango.tangosupport.TangoSupport;
+import com.shopify.volumizer.render.old.GlHelper;
+import com.shopify.volumizer.render.old.GlMesh;
 import com.shopify.volumizer.utils.FileUtils;
 
 import java.io.IOException;
 
-public class OpenGlCameraPreview {
+public class GlCameraPreview {
 
     private final String mVss ; /*=
             "attribute vec2 a_Position;\n" +
@@ -32,11 +34,11 @@ public class OpenGlCameraPreview {
     private final float[] textureCoords0 =
             new float[]{1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f};
 
-    private OpenGlMesh mMesh;
+    private GlMesh mMesh;
     private int[] mTextures = new int[1];
     private int mProgram;
 
-    public OpenGlCameraPreview(Context context) throws IOException {
+    public GlCameraPreview(Context context) throws IOException {
         mVss = FileUtils.loadStringFromAsset(context, "shaders/gles2.colcam.vertshader");
         mFss = FileUtils.loadStringFromAsset(context, "shaders/gles2.colcam.fragshader");
 
@@ -47,7 +49,7 @@ public class OpenGlCameraPreview {
         float[] ttmp = {1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f};
         // Indices.
         short[] itmp = {0, 2, 1, 3};
-        mMesh = new OpenGlMesh(vtmp, 2, ttmp, 2, itmp);
+        mMesh = new GlMesh(vtmp, 2, ttmp, 2, itmp);
     }
 
     public void updateTextureUv(int rotation){
@@ -59,7 +61,7 @@ public class OpenGlCameraPreview {
     public void setUpProgramAndBuffers() {
         createTextures();
         mMesh.createVbos();
-        mProgram = OpenGlHelper.createProgram(mVss, mFss);
+        mProgram = GlHelper.createProgram(mVss, mFss);
     }
 
     private void createTextures() {

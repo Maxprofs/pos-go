@@ -1,4 +1,4 @@
-package com.shopify.volumizer.render;
+package com.shopify.volumizer.render.old;
 
 import android.opengl.GLES20;
 
@@ -7,7 +7,7 @@ import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
 
-public class OpenGlMesh {
+public class GlMesh {
 
     private FloatBuffer mVertex;
     private FloatBuffer mTexCoord;
@@ -28,7 +28,7 @@ public class OpenGlMesh {
      * @param texCoordNumber    Number of coordinates per texcoord.
      * @param indices           Array of indices.
      */
-    public OpenGlMesh(float[] vertices, int vertexCoordNumber, float[] texCoords, int texCoordNumber, short[] indices) {
+    public GlMesh(float[] vertices, int vertexCoordNumber, float[] texCoords, int texCoordNumber, short[] indices) {
         mNumVertices = vertices.length / vertexCoordNumber;
         mVertexCoordNumber = vertexCoordNumber;
         mTexCoordNumber = texCoordNumber;

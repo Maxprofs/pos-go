@@ -1,7 +1,10 @@
-package com.shopify.volumizer.utils;
+package com.kanawish.gl.utils;
 
 import org.apache.commons.lang3.ArrayUtils;
 
+/**
+ * Utility methods relating to Matrix and Vector math.
+ */
 public class MatrixUtils {
 
     private MatrixUtils() {
@@ -28,7 +31,7 @@ public class MatrixUtils {
                         "|%2$+6.2f,%6$+6.2f,%10$+6.2f,%14$+6.2f|\n" +
                         "|%3$+6.2f,%7$+6.2f,%11$+6.2f,%15$+6.2f|\n";
 
-        return String.format(format, (Object[]) ArrayUtils.toObject(matrix));
+        return String.format(format, (Object[])ArrayUtils.toObject(matrix));
     }
 
 }

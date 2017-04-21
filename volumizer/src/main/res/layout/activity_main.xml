@@ -33,23 +33,34 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content">
         <Button
+            android:layout_margin="8dp"
             android:id="@+id/addButton"
             android:enabled="true"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Add"/>
+            android:background="@color/red"
+            android:textColor="@color/white"
+            android:text="RED KEY"
+            />
         <Button
+            android:layout_margin="8dp"
             android:id="@+id/clipButton"
             android:enabled="true"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Clip"/>
+            android:background="@color/green"
+            android:textColor="@color/black"
+            android:text="GREEN KEY"
+            />
         <Button
+            android:layout_margin="8dp"
             android:id="@+id/deleteButton"
             android:enabled="true"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Delete"/>
+            android:background="@color/blue"
+            android:textColor="@color/white"
+            android:text="BLUE KEY"/>
     </LinearLayout>
 
 </FrameLayout>
